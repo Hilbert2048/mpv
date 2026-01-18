@@ -223,7 +223,10 @@ struct stats_ctx *stats_ctx_create(void *ta_parent, struct mpv_global *global,
                                    const char *prefix)
 {
     struct stats_base *base = global->stats;
-    mp_assert(base);
+    
+    // Allow creating demuxer without stats (e.g., for lightweight preload)
+    if (!base)
+        return NULL;
 
     struct stats_ctx *ctx = talloc_zero(ta_parent, struct stats_ctx);
     ctx->base = base;
@@ -322,6 +325,8 @@ void stats_event(struct stats_ctx *ctx, const char *name)
 static void register_thread(struct stats_ctx *ctx, const char *name,
                             enum val_type type)
 {
+    if (!ctx)
+        return;
     mp_mutex_lock(&ctx->base->lock);
     struct stat_entry *e = find_entry(ctx, name);
     e->type = type;

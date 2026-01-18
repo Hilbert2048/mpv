@@ -170,6 +170,7 @@ sources = files(
     'player/misc.c',
     'player/osd.c',
     'player/playloop.c',
+    'player/preload.c',
     'player/screenshot.c',
     'player/scripting.c',
     'player/sub.c',

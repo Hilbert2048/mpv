@@ -47,6 +47,7 @@
 #include "input/input.h"
 #include "misc/json.h"
 #include "misc/language.h"
+#include "preload.h"
 
 #include "audio/out/ao.h"
 #include "filters/f_decoder_wrapper.h"
@@ -1230,6 +1231,15 @@ static void start_open(struct MPContext *mpctx, char *url, int url_flags,
 static void open_demux_reentrant(struct MPContext *mpctx)
 {
     char *url = mpctx->stream_open_filename;
+
+    // Check preload cache first
+    struct demuxer *preloaded = mpv_preload_get_demuxer(url);
+    if (preloaded) {
+        MP_VERBOSE(mpctx, "Using preloaded demuxer for: %s\n", url);
+        mpctx->demuxer = preloaded;
+        mp_cancel_set_parent(preloaded->cancel, mpctx->playback_abort);
+        return;
+    }
 
     if (mpctx->open_active) {
         bool done = atomic_load(&mpctx->open_done);
