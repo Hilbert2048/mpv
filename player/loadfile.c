@@ -205,6 +205,30 @@ static void uninit_demuxer(struct MPContext *mpctx)
 
     struct demuxer **demuxers = NULL;
     int num_demuxers = 0;
+    
+    // Track recycled demuxer to exclude it from cleanup
+    struct demuxer *recycled_demuxer = NULL;
+
+    // Try to recycle preloaded demuxer back to preload queue
+    if (mpctx->demuxer && mpctx->preload_url) {
+        // Save demuxer pointer BEFORE it's set to NULL for later exclusion
+        struct demuxer *demuxer_to_recycle = mpctx->demuxer;
+        
+        // Clear cancel parent relationship before recycling
+        // The parent was set to mpctx->playback_abort which will be destroyed
+        if (mpctx->demuxer->cancel)
+            mp_cancel_set_parent(mpctx->demuxer->cancel, NULL);
+        
+        if (mpv_preload_recycle(mpctx->preload_url, mpctx->demuxer) == 0) {
+            MP_VERBOSE(mpctx, "Recycled demuxer back to preload queue: %s\n", mpctx->preload_url);
+            recycled_demuxer = demuxer_to_recycle;  // Remember for tracks cleanup exclusion
+            mpctx->demuxer = NULL;  // Successfully recycled, don't destroy
+        }
+        talloc_free(mpctx->preload_url);
+        mpctx->preload_url = NULL;
+    }
+
+
 
     if (mpctx->demuxer)
         MP_TARRAY_APPEND(NULL, demuxers, num_demuxers, mpctx->demuxer);
@@ -217,6 +241,13 @@ static void uninit_demuxer(struct MPContext *mpctx)
         mp_assert(!track->vo_c && !track->ao_c);
         mp_assert(!track->sink);
 
+        // Skip recycled demuxer - it should not be destroyed
+        if (track->demuxer && track->demuxer == recycled_demuxer) {
+            track->demuxer = NULL;
+            talloc_free(track);
+            continue;
+        }
+        
         // Demuxers can be added in any order (if they appear mid-stream), and
         // we can't know which tracks uses which, so here's some O(n^2) trash.
         for (int n = 0; n < num_demuxers; n++) {
@@ -1231,13 +1262,18 @@ static void start_open(struct MPContext *mpctx, char *url, int url_flags,
 static void open_demux_reentrant(struct MPContext *mpctx)
 {
     char *url = mpctx->stream_open_filename;
-
+    
     // Check preload cache first
     struct demuxer *preloaded = mpv_preload_get_demuxer(url);
     if (preloaded) {
         MP_VERBOSE(mpctx, "Using preloaded demuxer for: %s\n", url);
         mpctx->demuxer = preloaded;
-        mp_cancel_set_parent(preloaded->cancel, mpctx->playback_abort);
+        // Save URL for recycling when player closes
+        mpctx->preload_url = talloc_strdup(mpctx, url);
+        // Only set cancel parent if cancel is valid
+        if (preloaded->cancel) {
+            mp_cancel_set_parent(preloaded->cancel, mpctx->playback_abort);
+        }
         return;
     }
 

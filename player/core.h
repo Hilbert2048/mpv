@@ -304,6 +304,7 @@ typedef struct MPContext {
     int num_chapters;
 
     struct demuxer *demuxer;
+    char *preload_url;  // If non-NULL, demuxer came from preload queue (for recycling)
     struct mp_tags *filtered_tags;
 
     struct track **tracks;

@@ -29,14 +29,18 @@
 
 #include "client.h"  // For MPV_EXPORT
 
+// Forward declarations
+struct demuxer;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Maximum number of concurrent preload entries.
+ * Default number of concurrent preload entries.
+ * Can be changed at runtime via mpv_preload_set_max_entries().
  */
-#define MPV_PRELOAD_MAX_ENTRIES 4
+#define MPV_PRELOAD_DEFAULT_MAX_ENTRIES 4
 
 /**
  * Preload options.
@@ -55,6 +59,7 @@ typedef enum mpv_preload_status {
     MPV_PRELOAD_STATUS_READY = 2,    /**< Prefetch target reached, usable but still caching */
     MPV_PRELOAD_STATUS_ERROR = 3,    /**< Failed to open */
     MPV_PRELOAD_STATUS_CACHED = 4,   /**< Entire file cached (eof_cached = true) */
+    MPV_PRELOAD_STATUS_DETACHED = 5, /**< Demuxer detached to player, can be recycled */
 } mpv_preload_status;
 
 /**
@@ -108,6 +113,19 @@ MPV_EXPORT int mpv_preload_cancel(const char *url);
 MPV_EXPORT void mpv_preload_clear_all(void);
 
 /**
+ * Recycle a detached demuxer back to preload queue.
+ *
+ * Only works for demuxers originally from preload queue (DETACHED status).
+ * If recycling fails (entry was evicted or reused), the demuxer should be
+ * freed by the caller.
+ *
+ * @param url Original URL
+ * @param demuxer Demuxer to recycle
+ * @return 0 on success, -1 if cannot recycle (caller should free demuxer)
+ */
+MPV_EXPORT int mpv_preload_recycle(const char *url, struct demuxer *demuxer);
+
+/**
  * Callback type for preload status events.
  *
  * Called when preload status changes (READY, CACHED, or ERROR).
@@ -127,6 +145,32 @@ typedef void (*mpv_preload_callback)(const char *url, const mpv_preload_info *in
  * @param callback Callback function pointer
  */
 MPV_EXPORT void mpv_preload_set_callback(mpv_preload_callback callback);
+
+/**
+ * Set maximum number of preload entries.
+ *
+ * IMPORTANT: Must be called BEFORE any preload starts.
+ * Once preload has started, this function returns -1 and has no effect.
+ * Call clearAll() first if you need to change the limit after preloading.
+ *
+ * @param new_max New maximum entries (1-64)
+ * @return 0 on success, -1 on error (already in use or invalid value)
+ */
+MPV_EXPORT int mpv_preload_set_max_entries(int new_max);
+
+/**
+ * Get current maximum number of preload entries.
+ *
+ * @return Current max_entries value
+ */
+MPV_EXPORT int mpv_preload_get_max_entries(void);
+
+/**
+ * Get number of currently active (non-empty) preload entries.
+ *
+ * @return Number of entries currently in use
+ */
+MPV_EXPORT int mpv_preload_get_active_count(void);
 
 #ifdef __cplusplus
 }

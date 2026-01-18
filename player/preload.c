@@ -53,10 +53,13 @@ struct preload_entry {
 static void *preload_thread(void *arg);
 static void cleanup_entry(struct preload_entry *entry);
 
-// Global cache
+// Global cache with pre-allocated array (safe for concurrent access)
+#define PRELOAD_CACHE_CAPACITY 64  // Fixed capacity
 static struct {
-    struct preload_entry entries[MPV_PRELOAD_MAX_ENTRIES];
+    struct preload_entry entries[PRELOAD_CACHE_CAPACITY];  // Static array
+    int max_entries;  // Logical limit (user-configurable, 1-64)
     pthread_mutex_t lock;
+    pthread_cond_t demuxer_ready_cond;  // Signaled when any demuxer becomes ready
     bool initialized;
 } preload_cache;
 
@@ -102,9 +105,6 @@ static void invoke_callback(struct preload_entry *entry)
     // Use entry's persistent storage for callback info (avoids stack corruption with async callbacks)
     fill_preload_info(entry, &entry->callback_info);
     
-    printf("[preload] Callback: status=%lld, fw=%lld, total=%lld, eof=%d\n", 
-           (long long)entry->callback_info.status, (long long)entry->callback_info.fw_bytes, 
-           (long long)entry->callback_info.total_bytes, entry->callback_info.eof_cached);
     g_preload_callback(entry->url, &entry->callback_info);
 }
 
@@ -112,9 +112,13 @@ static void invoke_callback(struct preload_entry *entry)
 static void ensure_initialized(void)
 {
     if (!preload_cache.initialized) {
-        printf("[preload] Preload API v2.0 initialized\n");
         mp_time_init();  // Initialize timer subsystem
         pthread_mutex_init(&preload_cache.lock, NULL);
+        pthread_cond_init(&preload_cache.demuxer_ready_cond, NULL);
+        
+        // Set default logical limit (static array is already zero-initialized)
+        preload_cache.max_entries = MPV_PRELOAD_DEFAULT_MAX_ENTRIES;
+        
         preload_cache.initialized = true;
     }
 }
@@ -122,7 +126,7 @@ static void ensure_initialized(void)
 // Find entry by URL (must hold lock)
 static struct preload_entry *find_entry_locked(const char *url)
 {
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         struct preload_entry *e = &preload_cache.entries[i];
         if (e->url && strcmp(e->url, url) == 0)
             return e;
@@ -134,7 +138,7 @@ static struct preload_entry *find_entry_locked(const char *url)
 static struct preload_entry *find_free_slot_locked(void)
 {
     // First, try to find an empty slot
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         if (!preload_cache.entries[i].url)
             return &preload_cache.entries[i];
     }
@@ -142,7 +146,7 @@ static struct preload_entry *find_free_slot_locked(void)
     // If full, evict oldest entry
     struct preload_entry *oldest = NULL;
     time_t oldest_time = 0;
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         struct preload_entry *e = &preload_cache.entries[i];
         if (!oldest || e->create_time < oldest_time) {
             oldest = e;
@@ -273,6 +277,12 @@ static void *preload_thread(void *arg)
     
     // Demuxer is now usable - mark as ready and invoke callback
     entry->status = MPV_PRELOAD_STATUS_READY;
+    
+    // Signal any waiters that demuxer is now available
+    pthread_mutex_lock(&preload_cache.lock);
+    pthread_cond_broadcast(&preload_cache.demuxer_ready_cond);
+    pthread_mutex_unlock(&preload_cache.lock);
+    
     invoke_callback(entry);
     
     // Wait until user requests the demuxer or cancels
@@ -379,8 +389,31 @@ struct demuxer *mpv_preload_get_demuxer(const char *url)
     pthread_mutex_lock(&preload_cache.lock);
     
     struct preload_entry *entry = find_entry_locked(url);
+    
+    // No entry or already failed
     if (!entry || entry->status == MPV_PRELOAD_STATUS_NONE || 
-        entry->status == MPV_PRELOAD_STATUS_ERROR || !entry->demuxer) {
+        entry->status == MPV_PRELOAD_STATUS_ERROR) {
+        pthread_mutex_unlock(&preload_cache.lock);
+        return NULL;
+    }
+    
+    // If LOADING (demux_open in progress), wait for demuxer to become available
+    // This is similar to how normal player blocks waiting for demux_open
+    if (entry->status == MPV_PRELOAD_STATUS_LOADING && !entry->demuxer) {
+        // Wait for condition signal (instant notification when demuxer ready)
+        while (entry->status == MPV_PRELOAD_STATUS_LOADING && !entry->demuxer) {
+            pthread_cond_wait(&preload_cache.demuxer_ready_cond, &preload_cache.lock);
+            // Re-find entry in case it was evicted while waiting
+            entry = find_entry_locked(url);
+            if (!entry) {
+                pthread_mutex_unlock(&preload_cache.lock);
+                return NULL;
+            }
+        }
+    }
+    
+    // After waiting, check again
+    if (!entry->demuxer || entry->status == MPV_PRELOAD_STATUS_ERROR) {
         pthread_mutex_unlock(&preload_cache.lock);
         return NULL;
     }
@@ -413,10 +446,11 @@ struct demuxer *mpv_preload_get_demuxer(const char *url)
     if (entry->cancel)
         talloc_steal(demux, entry->cancel);
     
-    // Clear entry
-    free(entry->url);
-    entry->url = NULL;
-    entry->status = MPV_PRELOAD_STATUS_NONE;
+    // Mark entry as DETACHED instead of clearing it
+    // This allows the demuxer to be recycled back later
+    entry->status = MPV_PRELOAD_STATUS_DETACHED;
+    // Keep entry->url for recycle matching
+    // Keep entry->global and entry->cancel references (they are now owned by demuxer via talloc_steal)
     entry->global = NULL;
     entry->cancel = NULL;
     
@@ -463,7 +497,7 @@ void mpv_preload_clear_all(void)
     
     // First, request all to cancel
     pthread_mutex_lock(&preload_cache.lock);
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         struct preload_entry *entry = &preload_cache.entries[i];
         if (entry->url) {
             entry->cancel_requested = true;
@@ -474,7 +508,7 @@ void mpv_preload_clear_all(void)
     pthread_mutex_unlock(&preload_cache.lock);
     
     // Join all threads
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         struct preload_entry *entry = &preload_cache.entries[i];
         if (entry->thread_running) {
             mp_thread_join(entry->thread);
@@ -484,8 +518,89 @@ void mpv_preload_clear_all(void)
     
     // Cleanup all
     pthread_mutex_lock(&preload_cache.lock);
-    for (int i = 0; i < MPV_PRELOAD_MAX_ENTRIES; i++) {
+    for (int i = 0; i < preload_cache.max_entries; i++) {
         cleanup_entry(&preload_cache.entries[i]);
     }
     pthread_mutex_unlock(&preload_cache.lock);
+}
+
+int mpv_preload_recycle(const char *url, struct demuxer *demuxer)
+{
+    if (!url || !demuxer || !preload_cache.initialized)
+        return -1;
+    
+    pthread_mutex_lock(&preload_cache.lock);
+    
+    // Find the DETACHED entry for this URL
+    struct preload_entry *entry = find_entry_locked(url);
+    if (!entry || entry->status != MPV_PRELOAD_STATUS_DETACHED) {
+        pthread_mutex_unlock(&preload_cache.lock);
+        return -1;  // Cannot recycle - entry was evicted or reused
+    }
+    
+    // Return demuxer to entry
+    entry->demuxer = demuxer;
+    entry->status = MPV_PRELOAD_STATUS_CACHED;
+    entry->create_time = time(NULL);  // Refresh timestamp for LRU
+    
+    // Note: global and cancel were talloc_steal'd to demuxer in get_demuxer.
+    // We don't reclaim them here - they stay with demuxer and will be properly
+    // freed when demuxer is eventually freed. Entry's global/cancel remain NULL.
+    // This is safe because a recycled entry won't be actively preloading
+    // (no thread running, no need to access global/cancel from entry).
+    
+    pthread_mutex_unlock(&preload_cache.lock);
+    
+    // Notify about recycle (status changed to CACHED)
+    invoke_callback(entry);
+    
+    return 0;
+}
+
+int mpv_preload_set_max_entries(int new_max)
+{
+    if (new_max <= 0 || new_max > PRELOAD_CACHE_CAPACITY)
+        return -1;
+    
+    // Must be called before initialization or when no entries exist
+    if (preload_cache.initialized) {
+        // Check if any entries are in use
+        pthread_mutex_lock(&preload_cache.lock);
+        bool has_entries = false;
+        for (int i = 0; i < preload_cache.max_entries; i++) {
+            if (preload_cache.entries[i].url) {
+                has_entries = true;
+                break;
+            }
+        }
+        if (has_entries) {
+            pthread_mutex_unlock(&preload_cache.lock);
+            return -1;  // Cannot change after preload started
+        }
+        preload_cache.max_entries = new_max;
+        pthread_mutex_unlock(&preload_cache.lock);
+    } else {
+        // Set before initialization
+        preload_cache.max_entries = new_max;
+    }
+    return 0;
+}
+
+int mpv_preload_get_max_entries(void)
+{
+    ensure_initialized();
+    return preload_cache.max_entries;
+}
+
+int mpv_preload_get_active_count(void)
+{
+    ensure_initialized();
+    pthread_mutex_lock(&preload_cache.lock);
+    int count = 0;
+    for (int i = 0; i < preload_cache.max_entries; i++) {
+        if (preload_cache.entries[i].url)
+            count++;
+    }
+    pthread_mutex_unlock(&preload_cache.lock);
+    return count;
 }
