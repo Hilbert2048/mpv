@@ -27,6 +27,7 @@ libswresample = dependency('libswresample', version: '>= 4.12.100')
 libswscale = dependency('libswscale', version: '>= 7.5.100')
 
 libplacebo = dependency('libplacebo', version: '>=6.338.2',
+                required: false,
                 default_options: ['default_library=static', 'demos=false'])
 
 libass = dependency('libass', version: '>= 0.12.2')
@@ -38,9 +39,12 @@ dependencies = [libass,
                 libavfilter,
                 libavformat,
                 libavutil,
-                libplacebo,
                 libswresample,
                 libswscale]
+
+if libplacebo.found()
+    dependencies += libplacebo
+endif
 
 # Keeps track of all enabled/disabled features
 features = {
@@ -48,7 +52,7 @@ features = {
     'ffmpeg': true,
     'gpl': get_option('gpl'),
     'libass': true,
-    'libplacebo': true,
+    'libplacebo': libplacebo.found(),
 }
 
 
