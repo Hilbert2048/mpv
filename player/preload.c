@@ -538,6 +538,17 @@ int mpv_preload_recycle(const char *url, struct demuxer *demuxer)
         return -1;  // Cannot recycle - entry was evicted or reused
     }
     
+    // Fix: Reset the cancel token and flush the demuxer.
+    // We CANNOT destroy/recreate demuxer->cancel because the underlying stream
+    // likely holds a reference to it (as a parent of its own private cancel).
+    // Destroying it would cause use-after-free in the stream.
+    if (demuxer->cancel) {
+        mp_cancel_reset(demuxer->cancel);
+    }
+    
+    // Flush internal buffers and EOF state so the demuxer is fresh for reuse.
+    demux_flush(demuxer);
+
     // Return demuxer to entry
     entry->demuxer = demuxer;
     entry->status = MPV_PRELOAD_STATUS_CACHED;
