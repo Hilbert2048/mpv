@@ -3551,6 +3551,25 @@ void demux_flush(demuxer_t *demuxer)
     mp_mutex_unlock(&in->lock);
 }
 
+// Reset the demuxer state for reuse (e.g. preloading) without clearing the cache.
+void demux_reset_state(demuxer_t *demuxer)
+{
+    struct demux_internal *in = demuxer->in;
+    mp_assert(demuxer == in->d_user);
+
+    mp_mutex_lock(&in->lock);
+    // Reset reader state (EOF, seeking) but keep the cache
+    clear_reader_state(in, true);
+    for (int n = 0; n < in->num_streams; n++) {
+        struct demux_stream *ds = in->streams[n]->ds;
+        ds->refreshing = false;
+        ds->eof = false;
+    }
+    in->eof = false;
+    in->seeking = false;
+    mp_mutex_unlock(&in->lock);
+}
+
 // Does some (but not all) things for switching to another range.
 static void switch_current_range(struct demux_internal *in,
                                  struct demux_cached_range *range)

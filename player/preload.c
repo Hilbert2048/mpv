@@ -547,7 +547,7 @@ int mpv_preload_recycle(const char *url, struct demuxer *demuxer)
     }
     
     // Flush internal buffers and EOF state so the demuxer is fresh for reuse.
-    demux_flush(demuxer);
+    demux_reset_state(demuxer);
 
     // Return demuxer to entry
     entry->demuxer = demuxer;

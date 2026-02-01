@@ -369,4 +369,7 @@ bool demux_matroska_uid_cmp(struct matroska_segment_uid *a,
 
 const char *stream_type_name(enum stream_type type);
 
+
+void demux_reset_state(struct demuxer *demuxer);
+
 #endif /* MPLAYER_DEMUXER_H */
