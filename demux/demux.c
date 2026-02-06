@@ -1202,13 +1202,35 @@ void demux_start_thread(struct demuxer *demuxer)
     }
 }
 
+// FIX: Dummy callback to safely handle wakeups after player destruction (2026-02-07)
+static void safe_wakeup_cb(void *ctx)
+{
+    // Do nothing. This function exists only to prevent UAF crash
+    // while still allowing interrupt signals to be processed.
+    (void)ctx;
+}
+
 void demux_stop_thread(struct demuxer *demuxer)
 {
     struct demux_internal *in = demuxer->in;
     mp_assert(demuxer == in->d_user);
 
+    // FIX: Clear wakeup callbacks to prevent use-after-free (2026-02-07)
+    // See safe_wakeup_cb logic.
+
     if (in->threading) {
         mp_mutex_lock(&in->lock);
+        
+        // Use dummy callbacks instead of NULL to prevent UAF while avoiding deadlock.
+        // We must allow the demux thread to receive interrupts (via wakeup_cb) so it
+        // can exit blocking I/O, but we redirect it to a safe no-op function.
+        in->wakeup_cb = safe_wakeup_cb;
+        in->wakeup_cb_ctx = NULL;
+        for (int n = 0; n < in->num_streams; n++) {
+            in->streams[n]->ds->wakeup_cb = safe_wakeup_cb;
+            in->streams[n]->ds->wakeup_cb_ctx = NULL;
+        }
+        
         in->thread_terminate = true;
         mp_cond_signal(&in->wakeup);
         mp_mutex_unlock(&in->lock);
@@ -3558,13 +3580,20 @@ void demux_reset_state(demuxer_t *demuxer)
     mp_assert(demuxer == in->d_user);
 
     mp_mutex_lock(&in->lock);
-    // Reset reader state (EOF, seeking) but keep the cache
-    clear_reader_state(in, true);
+    
+    // Use dummy callbacks (preload/reuse scenarios)
+    in->wakeup_cb = safe_wakeup_cb;
+    in->wakeup_cb_ctx = NULL;
     for (int n = 0; n < in->num_streams; n++) {
         struct demux_stream *ds = in->streams[n]->ds;
+        ds->wakeup_cb = safe_wakeup_cb;
+        ds->wakeup_cb_ctx = NULL;
         ds->refreshing = false;
         ds->eof = false;
     }
+    
+    // Reset reader state (EOF, seeking) but keep the cache
+    clear_reader_state(in, true);
     in->eof = false;
     in->seeking = false;
     mp_mutex_unlock(&in->lock);
