@@ -552,6 +552,18 @@ void mp_shutdown_clients(struct MPContext *mpctx)
     // Prevent that new clients can appear.
     clients->shutting_down = true;
 
+    // FIX: Clear all client wakeup callbacks to prevent FFI crash on shutdown (2026-02-07)
+    // When shutting down, we send MPV_EVENT_SHUTDOWN. If the Dart VM is simultaneously 
+    // struggling with GC or FFI metadata under heavy load, invoking the callback 
+    // can cause a crash (DLRT_GetFfiCallbackMetadata).
+    for (int n = 0; n < clients->num_clients; n++) {
+        struct mpv_handle *ctx = clients->clients[n];
+        mp_mutex_lock(&ctx->wakeup_lock);
+        ctx->wakeup_cb = NULL;
+        ctx->wakeup_cb_ctx = NULL;
+        mp_mutex_unlock(&ctx->wakeup_lock);
+    }
+
     // Wait until we can terminate.
     while (clients->num_clients || mpctx->outstanding_async ||
            !(mpctx->is_cli || clients->terminate_core_thread))
