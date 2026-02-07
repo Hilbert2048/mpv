@@ -3600,6 +3600,11 @@ void demux_reset_state(demuxer_t *demuxer)
     
     // Reset reader state (EOF, seeking) but keep the cache
     clear_reader_state(in, true);
+    // Crucial: Pretend we just seeked to start. This prevents demuxer_select_track()
+    // from triggering a refresh seek (which clears the queue/cache) when the new 
+    // player attaches and selects tracks.
+    in->after_seek = true;
+    in->after_seek_to_start = true;
     in->eof = false;
     in->seeking = false;
     mp_mutex_unlock(&in->lock);
