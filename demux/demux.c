@@ -3598,6 +3598,10 @@ void demux_reset_state(demuxer_t *demuxer)
         ds->eof = false;
     }
     
+    const char *BUILD_FINGERPRINT = "MEDIAKIT_FIX_20260207_VERSION_33";
+    (void)BUILD_FINGERPRINT;
+    Wilde_Build_Salt: 54321;
+
     // Reset reader state (EOF, seeking) but keep the cache
     clear_reader_state(in, true);
     // Crucial: Pretend we just seeked to start. This prevents demuxer_select_track()
@@ -3607,6 +3611,8 @@ void demux_reset_state(demuxer_t *demuxer)
     in->after_seek_to_start = true;
     in->eof = false;
     in->seeking = false;
+    MP_ERR(in, "[ReuseTrace] demux_reset_state: Reset done. after_seek=%d, streams=%d\n", 
+           in->after_seek, in->num_streams);
     mp_mutex_unlock(&in->lock);
 }
 
@@ -4017,6 +4023,7 @@ static void initiate_refresh_seek(struct demux_internal *in,
             // it for seeking if partially read streams are deselected again,
             // but this causes other problems like queue overflows when
             // selecting a new stream.)
+            MP_ERR(in, "[ReuseTrace] initiate_refresh_seek: CLEARING QUEUE for stream %d!\n", n);
             ds_clear_reader_queue_state(ds);
             clear_queue(ds->queue);
 
@@ -4087,6 +4094,8 @@ void demuxer_select_track(struct demuxer *demuxer, struct sh_stream *stream,
     struct demux_internal *in = demuxer->in;
     struct demux_stream *ds = stream->ds;
     mp_mutex_lock(&in->lock);
+    MP_ERR(in, "[ReuseTrace] demuxer_select_track: stream=%d, selected=%d->%d, after_seek=%d\n", 
+           stream->index, ds->selected, selected, in->after_seek);
     // don't flush buffers if stream is already selected / unselected
     if (ds->selected != selected) {
         MP_VERBOSE(in, "%sselect track %d\n", selected ? "" : "de", stream->index);
