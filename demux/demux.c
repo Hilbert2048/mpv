@@ -3582,7 +3582,7 @@ void demux_reset_state(demuxer_t *demuxer)
     mp_mutex_lock(&in->lock);
     
     // BUILD FINGERPRINT FOR BINARY VERIFICATION
-    static const char *MK_FINGERPRINT = "MEDIAKIT_FIX_TRACE_20260207_V1";
+    static const char *MK_FINGERPRINT = "MEDIAKIT_FIX_TRACE_20260207_V7";
     (void)MK_FINGERPRINT;
     MP_ERR(in, "[ReuseTrace] %s\n", MK_FINGERPRINT);
     
