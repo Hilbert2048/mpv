@@ -3582,6 +3582,8 @@ void demux_reset_state(demuxer_t *demuxer)
     mp_mutex_lock(&in->lock);
     
     // Use dummy callbacks (preload/reuse scenarios)
+    // Use safe_wakeup_cb for the main demuxer callback to prevent crashes
+    // if the demuxer thread wakes up before the new player is fully attached.
     in->wakeup_cb = safe_wakeup_cb;
     in->wakeup_cb_ctx = NULL;
     for (int n = 0; n < in->num_streams; n++) {
