@@ -3586,7 +3586,7 @@ void demux_reset_state(demuxer_t *demuxer)
     in->wakeup_cb_ctx = NULL;
     for (int n = 0; n < in->num_streams; n++) {
         struct demux_stream *ds = in->streams[n]->ds;
-        ds->wakeup_cb = safe_wakeup_cb;
+        ds->wakeup_cb = NULL;
         ds->wakeup_cb_ctx = NULL;
         ds->refreshing = false;
         ds->eof = false;
