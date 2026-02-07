@@ -3586,6 +3586,10 @@ void demux_reset_state(demuxer_t *demuxer)
     in->wakeup_cb_ctx = NULL;
     for (int n = 0; n < in->num_streams; n++) {
         struct demux_stream *ds = in->streams[n]->ds;
+        // Reset to NULL (not safe_wakeup_cb).
+        // This ensures wakeup_ds() falls back to using in->wakeup_cb, which will
+        // be updated by the new player instance. If we set this to safe_wakeup_cb,
+        // it would override the new player's callback and cause a black screen.
         ds->wakeup_cb = NULL;
         ds->wakeup_cb_ctx = NULL;
         ds->refreshing = false;
