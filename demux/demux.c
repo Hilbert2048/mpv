@@ -3581,6 +3581,11 @@ void demux_reset_state(demuxer_t *demuxer)
 
     mp_mutex_lock(&in->lock);
     
+    // BUILD FINGERPRINT FOR BINARY VERIFICATION
+    static const char *MK_FINGERPRINT = "MEDIAKIT_FIX_TRACE_20260207_V1";
+    (void)MK_FINGERPRINT;
+    MP_ERR(in, "[ReuseTrace] %s\n", MK_FINGERPRINT);
+    
     // Use dummy callbacks (preload/reuse scenarios)
     // Use safe_wakeup_cb for the main demuxer callback to prevent crashes
     // if the demuxer thread wakes up before the new player is fully attached.
