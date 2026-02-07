@@ -3602,10 +3602,6 @@ void demux_reset_state(demuxer_t *demuxer)
         ds->refreshing = false;
         ds->eof = false;
     }
-    
-    const char *BUILD_FINGERPRINT = "MEDIAKIT_FIX_20260207_VERSION_33";
-    (void)BUILD_FINGERPRINT;
-    Wilde_Build_Salt: 54321;
 
     // Reset reader state (EOF, seeking) but keep the cache
     clear_reader_state(in, true);
