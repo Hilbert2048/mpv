@@ -746,7 +746,9 @@ static int send_event(struct mpv_handle *ctx, struct mpv_event *event, bool copy
     if (ctx->property_event_masks & mask)
         notify_property_events(ctx, event->event_id);
     int r;
-    if (!(ctx->event_mask & mask)) {
+    if (ctx->destroying) {
+        r = -1;
+    } else if (!(ctx->event_mask & mask)) {
         r = 0;
     } else if (ctx->choked) {
         r = -1;
