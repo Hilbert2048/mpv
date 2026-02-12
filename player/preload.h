@@ -10,6 +10,7 @@
 
 // Forward declaration for internal use
 struct demuxer;
+struct mp_cancel;
 
 /**
  * Get demuxer for a URL (internal use).
@@ -20,7 +21,7 @@ struct demuxer;
  * @param url URL to get demuxer for
  * @return demuxer or NULL if not found
  */
-struct demuxer *mpv_preload_get_demuxer(const char *url);
+struct demuxer *mpv_preload_get_demuxer(const char *url, struct mp_cancel *cancel);
 
 #endif /* MP_PLAYER_PRELOAD_H */
 

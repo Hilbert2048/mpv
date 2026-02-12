@@ -1264,7 +1264,7 @@ static void open_demux_reentrant(struct MPContext *mpctx)
     char *url = mpctx->stream_open_filename;
     
     // Check preload cache first
-    struct demuxer *preloaded = mpv_preload_get_demuxer(url);
+    struct demuxer *preloaded = mpv_preload_get_demuxer(url, mpctx->open_cancel);
     if (preloaded) {
         MP_VERBOSE(mpctx, "Using preloaded demuxer for: %s\n", url);
         mpctx->demuxer = preloaded;

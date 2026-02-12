@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 
+#include <sys/time.h>
 #include "preload.h"
 
 #include "common/common.h"
@@ -381,7 +382,7 @@ int mpv_preload_get_info(const char *url, mpv_preload_info *info)
 }
 
 
-struct demuxer *mpv_preload_get_demuxer(const char *url)
+struct demuxer *mpv_preload_get_demuxer(const char *url, struct mp_cancel *cancel)
 {
     if (!url || !preload_cache.initialized)
         return NULL;
@@ -398,11 +399,27 @@ struct demuxer *mpv_preload_get_demuxer(const char *url)
     }
     
     // If LOADING (demux_open in progress), wait for demuxer to become available
-    // This is similar to how normal player blocks waiting for demux_open
+    // or for the operation to be cancelled.
     if (entry->status == MPV_PRELOAD_STATUS_LOADING && !entry->demuxer) {
-        // Wait for condition signal (instant notification when demuxer ready)
         while (entry->status == MPV_PRELOAD_STATUS_LOADING && !entry->demuxer) {
-            pthread_cond_wait(&preload_cache.demuxer_ready_cond, &preload_cache.lock);
+            // Check for cancellation
+            if (cancel && mp_cancel_test(cancel)) {
+                pthread_mutex_unlock(&preload_cache.lock);
+                return NULL;
+            }
+            
+            struct timespec ts;
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            ts.tv_sec = tv.tv_sec;
+            ts.tv_nsec = tv.tv_usec * 1000 + 100 * 1000000; // 100ms
+            if (ts.tv_nsec >= 1000000000) {
+                ts.tv_sec += 1;
+                ts.tv_nsec -= 1000000000;
+            }
+            
+            pthread_cond_timedwait(&preload_cache.demuxer_ready_cond, &preload_cache.lock, &ts);
+            
             // Re-find entry in case it was evicted while waiting
             entry = find_entry_locked(url);
             if (!entry) {

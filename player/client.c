@@ -346,7 +346,7 @@ static void wakeup_client(struct mpv_handle *ctx)
     if (!ctx->need_wakeup) {
         ctx->need_wakeup = true;
         mp_cond_broadcast(&ctx->wakeup);
-        if (ctx->wakeup_cb)
+        if (ctx->wakeup_cb && !ctx->destroying)
             ctx->wakeup_cb(ctx->wakeup_cb_ctx);
         if (ctx->wakeup_pipe[0] != -1)
             (void)write(ctx->wakeup_pipe[1], &(char){0}, 1);
@@ -746,9 +746,7 @@ static int send_event(struct mpv_handle *ctx, struct mpv_event *event, bool copy
     if (ctx->property_event_masks & mask)
         notify_property_events(ctx, event->event_id);
     int r;
-    if (ctx->destroying) {
-        r = -1;
-    } else if (!(ctx->event_mask & mask)) {
+    if (!(ctx->event_mask & mask)) {
         r = 0;
     } else if (ctx->choked) {
         r = -1;
